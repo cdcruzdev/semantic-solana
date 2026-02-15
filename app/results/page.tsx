@@ -46,6 +46,44 @@ function getTypeColor(type: string): string {
   return TYPE_COLORS[type] || TYPE_COLORS.UNKNOWN;
 }
 
+function getFilterCategory(type: string): string {
+  switch (type) {
+    case "SWAP": return "Swap";
+    case "TRANSFER": return "Transfer";
+    case "LP_DEPOSIT":
+    case "LP_WITHDRAW":
+    case "DEPOSIT":
+    case "CLAIM":
+    case "ADD_LIQUIDITY":
+    case "REMOVE_LIQUIDITY":
+    case "OPEN_POSITION":
+    case "CLOSE_POSITION":
+    case "PERPS":
+    case "DCA":
+    case "STAKE_SOL":
+    case "UNSTAKE_SOL":
+    case "MULTISIG":
+      return "DeFi";
+    case "NFT_SALE":
+    case "NFT_LISTING":
+    case "NFT_MINT":
+    case "COMPRESSED_NFT_MINT":
+    case "NFT_BID":
+    case "NFT_CANCEL_LISTING":
+      return "NFT";
+    case "DOMAIN": return "Domain";
+    case "SPAM": return "Spam";
+    default: return "Other";
+  }
+}
+
+function parseAmount(amountStr: string): number {
+  if (!amountStr) return 0;
+  const match = amountStr.match(/([\d.,]+)/);
+  if (!match) return 0;
+  return parseFloat(match[1].replace(/,/g, "")) || 0;
+}
+
 function truncateAddress(addr: string): string {
   if (!addr || addr.length < 12) return addr || "";
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
@@ -208,6 +246,8 @@ function ResultsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [newQuery, setNewQuery] = useState(query);
+  const [activeFilter, setActiveFilter] = useState<string>("ALL");
+  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "amount-high" | "amount-low">("newest");
   const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
   const [resolving, setResolving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -359,6 +399,58 @@ function ResultsContent() {
               </p>
             </div>
 
+            {/* Filter & Sort controls */}
+            {data.transactions.length > 0 && (() => {
+              // Compute type counts for filter pills
+              const typeCounts: Record<string, number> = {};
+              for (const tx of data.transactions) {
+                const category = getFilterCategory(tx.type);
+                typeCounts[category] = (typeCounts[category] || 0) + 1;
+              }
+              const filterOptions = [
+                { key: "ALL", label: "All" },
+                ...(typeCounts["Swap"] ? [{ key: "Swap", label: `Swaps (${typeCounts["Swap"]})` }] : []),
+                ...(typeCounts["Transfer"] ? [{ key: "Transfer", label: `Transfers (${typeCounts["Transfer"]})` }] : []),
+                ...(typeCounts["DeFi"] ? [{ key: "DeFi", label: `DeFi (${typeCounts["DeFi"]})` }] : []),
+                ...(typeCounts["NFT"] ? [{ key: "NFT", label: `NFTs (${typeCounts["NFT"]})` }] : []),
+                ...(typeCounts["Domain"] ? [{ key: "Domain", label: `Domains (${typeCounts["Domain"]})` }] : []),
+                ...(typeCounts["Spam"] ? [{ key: "Spam", label: `Spam (${typeCounts["Spam"]})` }] : []),
+                ...(typeCounts["Other"] ? [{ key: "Other", label: `Other (${typeCounts["Other"]})` }] : []),
+              ];
+
+              return (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  {/* Filter pills */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {filterOptions.map((opt) => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setActiveFilter(opt.key)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium cursor-pointer transition-all duration-150 border ${
+                          activeFilter === opt.key
+                            ? "bg-accent/20 text-accent border-accent/40"
+                            : "bg-surface text-text-muted border-border hover:border-text-muted hover:text-text-dim"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Sort dropdown */}
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                    className="bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-dim cursor-pointer focus:outline-none focus:border-accent shrink-0"
+                  >
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="amount-high">Largest amount</option>
+                    <option value="amount-low">Smallest amount</option>
+                  </select>
+                </div>
+              );
+            })()}
+
             {/* Table header (desktop) */}
             {data.transactions.length > 0 && (
               <div className="hidden md:grid grid-cols-[88px_110px_1fr_140px_180px] gap-3 px-4 py-2 text-[10px] uppercase tracking-wider text-text-muted font-semibold border-b border-border">
@@ -372,18 +464,34 @@ function ResultsContent() {
 
             {/* Transactions */}
             <div className="bg-surface/30 rounded-lg overflow-hidden border border-border">
-              {data.transactions.length === 0 ? (
-                <div className="text-center py-16 text-text-dim">
-                  <p className="text-lg mb-1">No transactions found</p>
-                  <p className="text-sm text-text-muted">
-                    This wallet may be empty or inactive
-                  </p>
-                </div>
-              ) : (
-                data.transactions.map((tx) => (
+              {(() => {
+                let filtered = data.transactions;
+                if (activeFilter !== "ALL") {
+                  filtered = filtered.filter(tx => getFilterCategory(tx.type) === activeFilter);
+                }
+                // Sort
+                filtered = [...filtered].sort((a, b) => {
+                  switch (sortBy) {
+                    case "oldest": return a.timestamp - b.timestamp;
+                    case "amount-high": return parseAmount(b.amount) - parseAmount(a.amount);
+                    case "amount-low": return parseAmount(a.amount) - parseAmount(b.amount);
+                    default: return b.timestamp - a.timestamp;
+                  }
+                });
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center py-16 text-text-dim">
+                      <p className="text-lg mb-1">No matching transactions</p>
+                      <p className="text-sm text-text-muted">
+                        Try a different filter
+                      </p>
+                    </div>
+                  );
+                }
+                return filtered.map((tx) => (
                   <TransactionRow key={tx.signature} tx={tx} />
-                ))
-              )}
+                ));
+              })()}
             </div>
           </>
         )}
