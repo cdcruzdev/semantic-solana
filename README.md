@@ -18,6 +18,12 @@ Semantic Solana takes the raw output of Solana's transaction logs and translates
 
 Every transaction gets a type badge, a smart description, token amounts, and counterparty addresses with domain resolution where available.
 
+## Why Not Just Use Solscan?
+
+Existing Solana explorers show parsed data, but parsing isn't understanding. Solscan labels a Raydium CLMM interaction as "CLOSE_ACCOUNT." Semantic Solana calls it "Deposited 0.02 SOL + 2.24 USDT into Raydium CLMM LP." Solscan shows a Jupiter Perps transaction as "UNKNOWN." Semantic Solana calls it "Opened perp position with 43 USDC on Jupiter."
+
+The difference is a multi-layer classification engine that doesn't just read the transaction type. It walks the instruction tree to identify which programs were invoked, cross-references token flows to determine what moved where, and builds a description that tells you what the user was actually trying to do.
+
 ## Features
 
 **Program Recognition**
