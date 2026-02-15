@@ -148,19 +148,29 @@ function getProgramName(programId: string): string {
   return KNOWN_PROGRAMS[programId] || "";
 }
 
+function truncateAddr(addr: string): string {
+  if (!addr || addr.length < 12) return addr || "";
+  return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
+}
+
+function floorTo4(n: number): string {
+  // Floor to 4 decimal places, no scientific notation
+  const floored = Math.floor(n * 10000) / 10000;
+  if (floored === 0 && n > 0) return "< 0.0001";
+  return floored.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+}
+
 function formatSol(lamports: number): string {
   const sol = lamports / 1e9;
   if (sol === 0) return "0 SOL";
-  if (sol < 0.0001) return `${sol.toExponential(2)} SOL`;
-  return `${sol.toLocaleString(undefined, { maximumFractionDigits: 6 })} SOL`;
+  return `${floorTo4(sol)} SOL`;
 }
 
 function formatTokenAmount(amount: number | undefined | null, mint: string): string {
   const token = KNOWN_TOKENS[mint];
   const symbol = token?.symbol || "tokens";
   if (!amount || amount === 0) return `0 ${symbol}`;
-  if (amount < 0.0001) return `${amount.toExponential(2)} ${symbol}`;
-  return `${amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${symbol}`;
+  return `${floorTo4(amount)} ${symbol}`;
 }
 
 // Check if a transaction involves domain services
@@ -327,12 +337,19 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
           outputStr = formatSol(totalNativeReceived);
         }
 
+        // Filter out zero amounts
+        if (inputStr.startsWith("0 ")) inputStr = "";
+        if (outputStr.startsWith("0 ")) outputStr = "";
+
         if (inputStr && outputStr) {
           description = `Swapped ${inputStr} for ${outputStr}`;
           amount = inputStr;
         } else if (inputStr) {
           description = `Swapped ${inputStr}`;
           amount = inputStr;
+        } else if (outputStr) {
+          description = `Received ${outputStr} from swap`;
+          amount = outputStr;
         } else if (tx.description && tx.description.length > 10) {
           // Use Helius description if we couldn't parse swap details
           description = tx.description;
@@ -484,6 +501,57 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
       break;
     }
 
+    case "OPEN_POSITION": {
+      typeLabel = "Open LP";
+      const parts: string[] = [];
+      if (totalNativeSent > 0) parts.push(formatSol(totalNativeSent));
+      for (const t of tokensSent) parts.push(formatTokenAmount(t.amount, t.mint));
+      description = parts.length > 0
+        ? `Opened LP position with ${parts.join(" + ")}`
+        : "Opened a liquidity position";
+      if (sourceName) description += ` on ${sourceName}`;
+      amount = parts[0] || "";
+      from = walletAddress;
+      break;
+    }
+
+    case "CLOSE_POSITION": {
+      typeLabel = "Close LP";
+      const parts: string[] = [];
+      if (totalNativeReceived > 0) parts.push(formatSol(totalNativeReceived));
+      for (const t of tokensReceived) parts.push(formatTokenAmount(t.amount, t.mint));
+      description = parts.length > 0
+        ? `Closed LP position, received ${parts.join(" + ")}`
+        : "Closed a liquidity position";
+      if (sourceName) description += ` on ${sourceName}`;
+      amount = parts[0] || "";
+      to = walletAddress;
+      break;
+    }
+
+    case "INITIALIZE_ACCOUNT": {
+      typeLabel = "Init Account";
+      const solAmt = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
+      description = solAmt
+        ? `Initialized account (${solAmt} rent)`
+        : "Initialized a new account";
+      if (sourceName && sourceName !== "Unknown") description += ` via ${sourceName}`;
+      amount = solAmt;
+      from = walletAddress;
+      break;
+    }
+
+    case "NFT_MINT":
+    case "COMPRESSED_NFT_MINT": {
+      typeLabel = type === "COMPRESSED_NFT_MINT" ? "cNFT Mint" : "NFT Mint";
+      const mintCost = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
+      description = mintCost ? `Minted an NFT for ${mintCost}` : "Minted an NFT";
+      if (sourceName && sourceName !== "Unknown") description += ` via ${sourceName}`;
+      if (mintCost) amount = mintCost;
+      from = walletAddress;
+      break;
+    }
+
     default: {
       // Check if domain related even with UNKNOWN type
       if (domainService) {
@@ -506,7 +574,7 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
         } else {
           description = typeLabel;
         }
-        if (sourceName && description !== typeLabel) description += ` via ${sourceName}`;
+        if (sourceName && sourceName !== "Unknown" && description !== typeLabel) description += ` via ${sourceName}`;
       }
     }
   }
@@ -687,8 +755,8 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
   return domains;
 }
 
-// Dust threshold: transfers below this are likely spam (10,000 lamports = 0.00001 SOL)
-const DUST_THRESHOLD_LAMPORTS = 10000;
+// Dust threshold: transfers below this are likely spam (100,000 lamports = 0.0001 SOL)
+const DUST_THRESHOLD_LAMPORTS = 100000;
 const DUST_THRESHOLD_SOL = DUST_THRESHOLD_LAMPORTS / 1e9;
 
 function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress: string): ParsedTransaction[] {
@@ -701,6 +769,12 @@ function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress
     // Check if this is a dust transfer (tiny amount received from unknown address)
     if (tx.type === "TRANSFER" && tx.to === walletAddress) {
       // Parse the amount to check if it's dust
+      if (tx.amount.startsWith("< 0.0001")) {
+        dustCount++;
+        dustTotalLamports += 1;
+        if (tx.from) dustSenders.add(tx.from);
+        continue;
+      }
       const amountMatch = tx.amount.match(/([\d.e+-]+)\s*SOL/i);
       if (amountMatch) {
         const solAmount = parseFloat(amountMatch[1]);
