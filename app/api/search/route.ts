@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { TldParser } from "@onsol/tldparser";
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const HELIUS_RPC_URL = HELIUS_API_KEY
+  ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+  : "https://api.mainnet-beta.solana.com";
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 // Known program IDs for better labeling
@@ -525,15 +530,15 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   };
 }
 
-// Resolve .sol domains for addresses via Bonfida SNS proxy
+// Resolve domains for addresses via Bonfida SNS + AllDomains TLD parser
 async function resolveDomains(addresses: string[]): Promise<Record<string, string>> {
   const domains: Record<string, string> = {};
-  const unique = [...new Set(addresses.filter(a => a && BASE58_REGEX.test(a)))].slice(0, 10); // limit to 10
+  const unique = [...new Set(addresses.filter(a => a && BASE58_REGEX.test(a)))].slice(0, 10);
 
   if (unique.length === 0) return domains;
 
-  // Resolve each address in parallel via Bonfida SNS proxy
-  const results = await Promise.allSettled(
+  // 1. Try Bonfida SNS (.sol domains) in parallel
+  const bonfidaResults = await Promise.allSettled(
     unique.map(async (addr) => {
       try {
         const response = await fetch(
@@ -543,7 +548,6 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
         if (!response.ok) return { addr, domain: null };
         const data = await response.json();
         if (data.s === "ok" && data.result && data.result.length > 0) {
-          // Return the first domain (shortest/primary)
           const sorted = data.result.sort(
             (a: { domain: string }, b: { domain: string }) => a.domain.length - b.domain.length
           );
@@ -556,9 +560,30 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
     })
   );
 
-  for (const r of results) {
+  for (const r of bonfidaResults) {
     if (r.status === "fulfilled" && r.value.domain) {
       domains[r.value.addr] = r.value.domain;
+    }
+  }
+
+  // 2. For the first unresolved address (searched wallet), try AllDomains TLD parser
+  const primaryUnresolved = unique.find(a => !domains[a]);
+  if (primaryUnresolved) {
+    try {
+      const connection = new Connection(HELIUS_RPC_URL);
+      const parser = new TldParser(connection);
+      const pubkey = new PublicKey(primaryUnresolved);
+      const userDomains = await parser.getParsedAllUserDomains(pubkey);
+      if (userDomains && userDomains.length > 0) {
+        // Pick the shortest non-.sol domain (Bonfida already handles .sol)
+        const nonSol = userDomains.filter(d => !d.domain.endsWith(".sol"));
+        const best = nonSol.length > 0
+          ? nonSol.sort((a, b) => a.domain.length - b.domain.length)[0]
+          : userDomains.sort((a, b) => a.domain.length - b.domain.length)[0];
+        domains[primaryUnresolved] = best.domain;
+      }
+    } catch {
+      // AllDomains resolution is best-effort
     }
   }
 
