@@ -150,10 +150,10 @@ function formatSol(lamports: number): string {
   return `${sol.toLocaleString(undefined, { maximumFractionDigits: 6 })} SOL`;
 }
 
-function formatTokenAmount(amount: number, mint: string): string {
+function formatTokenAmount(amount: number | undefined | null, mint: string): string {
   const token = KNOWN_TOKENS[mint];
   const symbol = token?.symbol || "tokens";
-  if (amount === 0) return `0 ${symbol}`;
+  if (!amount || amount === 0) return `0 ${symbol}`;
   if (amount < 0.0001) return `${amount.toExponential(2)} ${symbol}`;
   return `${amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${symbol}`;
 }
@@ -272,11 +272,12 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   const tokensReceived: { mint: string; amount: number; from: string }[] = [];
 
   for (const t of tx.tokenTransfers || []) {
-    if (t.fromUserAccount === walletAddress && t.tokenAmount > 0) {
-      tokensSent.push({ mint: t.mint, amount: t.tokenAmount, to: t.toUserAccount });
+    const amt = t.tokenAmount ?? 0;
+    if (t.fromUserAccount === walletAddress && amt > 0) {
+      tokensSent.push({ mint: t.mint, amount: amt, to: t.toUserAccount });
     }
-    if (t.toUserAccount === walletAddress && t.tokenAmount > 0) {
-      tokensReceived.push({ mint: t.mint, amount: t.tokenAmount, from: t.fromUserAccount });
+    if (t.toUserAccount === walletAddress && amt > 0) {
+      tokensReceived.push({ mint: t.mint, amount: amt, from: t.fromUserAccount });
     }
   }
 
