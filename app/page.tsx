@@ -71,11 +71,11 @@ export default function Home() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
-    router.push(`/results?q=${encodeURIComponent(query.trim())}`);
+    router.push(`/wallet?q=${encodeURIComponent(query.trim())}`);
   };
 
   const handleExample = (q: string) => {
-    router.push(`/results?q=${encodeURIComponent(q)}`);
+    router.push(`/wallet?q=${encodeURIComponent(q)}`);
   };
 
   return (
@@ -115,7 +115,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => {
-                        router.push(`/results?q=${encodeURIComponent(query.trim())}`);
+                        router.push(`/wallet?q=${encodeURIComponent(query.trim())}`);
                       }}
                       className="w-full px-5 py-3 text-left hover:bg-accent/10 transition-colors cursor-pointer"
                     >

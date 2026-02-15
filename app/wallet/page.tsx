@@ -292,7 +292,7 @@ function ResultsContent() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newQuery.trim()) return;
-    router.push(`/results?q=${encodeURIComponent(newQuery.trim())}`);
+    router.push(`/wallet?q=${encodeURIComponent(newQuery.trim())}`);
   };
 
   return (
@@ -327,7 +327,7 @@ function ResultsContent() {
                   ) : resolveResult?.resolved ? (
                     <button
                       type="button"
-                      onClick={() => router.push(`/results?q=${encodeURIComponent(newQuery.trim())}`)}
+                      onClick={() => router.push(`/wallet?q=${encodeURIComponent(newQuery.trim())}`)}
                       className="w-full px-4 py-2 text-left hover:bg-accent/10 transition-colors cursor-pointer"
                     >
                       <span className="text-accent font-medium text-sm">{resolveResult.domain}</span>

@@ -131,6 +131,14 @@ Built for Vercel. Push to GitHub and import the repo in Vercel. Add `HELIUS_API_
 npx vercel --prod
 ```
 
+## Roadmap
+
+- **Transaction detail pages** (`/tx/<signature>`): Click any transaction to see a full breakdown with all token transfers, program interactions, and account changes. Currently links to Solscan as a bridge.
+- **Pagination**: Load older transactions beyond the initial 100.
+- **Search by token**: Find all transactions involving a specific token mint.
+- **Wallet analytics**: Summary stats like total volume, most-used protocols, and token holdings.
+- **More program coverage**: Continuously adding new Solana programs as the ecosystem grows.
+
 ## License
 
 MIT
