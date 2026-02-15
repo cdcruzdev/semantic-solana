@@ -508,27 +508,41 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   };
 }
 
-// Resolve domains for addresses using multiple services
+// Resolve .sol domains for addresses via Bonfida SNS proxy
 async function resolveDomains(addresses: string[]): Promise<Record<string, string>> {
   const domains: Record<string, string> = {};
-  const unique = [...new Set(addresses.filter(a => a && BASE58_REGEX.test(a)))];
+  const unique = [...new Set(addresses.filter(a => a && BASE58_REGEX.test(a)))].slice(0, 10); // limit to 10
 
-  if (unique.length === 0 || !HELIUS_API_KEY) return domains;
+  if (unique.length === 0) return domains;
 
-  // Use Helius DAS API to check for domain names
-  // Try fetching .sol domains from Helius
-  try {
-    const response = await fetch(`https://api.helius.xyz/v0/addresses/${unique[0]}/names?api-key=${HELIUS_API_KEY}`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (response.ok) {
-      const data = await response.json();
-      if (data.domainNames && data.domainNames.length > 0) {
-        domains[unique[0]] = data.domainNames[0] + ".sol";
+  // Resolve each address in parallel via Bonfida SNS proxy
+  const results = await Promise.allSettled(
+    unique.map(async (addr) => {
+      try {
+        const response = await fetch(
+          `https://sns-sdk-proxy.bonfida.workers.dev/domains/${addr}`,
+          { signal: AbortSignal.timeout(3000) }
+        );
+        if (!response.ok) return { addr, domain: null };
+        const data = await response.json();
+        if (data.s === "ok" && data.result && data.result.length > 0) {
+          // Return the first domain (shortest/primary)
+          const sorted = data.result.sort(
+            (a: { domain: string }, b: { domain: string }) => a.domain.length - b.domain.length
+          );
+          return { addr, domain: sorted[0].domain + ".sol" };
+        }
+        return { addr, domain: null };
+      } catch {
+        return { addr, domain: null };
       }
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value.domain) {
+      domains[r.value.addr] = r.value.domain;
     }
-  } catch {
-    // Domain resolution is best-effort
   }
 
   return domains;
@@ -659,9 +673,14 @@ export async function GET(request: NextRequest) {
     const rawTransactions: HeliusTransaction[] = await response.json();
     const transactions = rawTransactions.map(tx => classifyTransaction(tx, query));
 
-    // Try to resolve domains for the searched wallet
-    const allAddresses = [query];
-    const domains = await resolveDomains(allAddresses);
+    // Collect unique addresses: searched wallet + counterparties
+    const addressSet = new Set<string>([query]);
+    for (const tx of transactions) {
+      if (tx.from && tx.from !== query) addressSet.add(tx.from);
+      if (tx.to && tx.to !== query) addressSet.add(tx.to);
+    }
+    // Resolve domains (capped at 10 addresses)
+    const domains = await resolveDomains([...addressSet]);
 
     // Attach domain to transactions
     for (const tx of transactions) {
