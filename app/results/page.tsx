@@ -51,17 +51,53 @@ function formatTime(timestamp: number): string {
   });
 }
 
-function AddressDisplay({ address, domain }: { address: string; domain?: string }) {
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-surface-light cursor-pointer transition-colors duration-150 shrink-0"
+      title="Copy address"
+    >
+      {copied ? (
+        <svg className="w-3 h-3 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="w-3 h-3 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function AddressDisplay({ address, domain, showCopy }: { address: string; domain?: string; showCopy?: boolean }) {
   if (domain) {
     return (
-      <span className="text-accent text-xs font-medium" title={address}>
-        {domain}
+      <span className="inline-flex items-center gap-0.5">
+        <span className="text-accent text-xs font-medium" title={address}>
+          {domain}
+        </span>
+        {showCopy && <CopyButton text={address} />}
       </span>
     );
   }
   return (
-    <span className="text-text-muted text-xs font-mono" title={address}>
-      {truncateAddress(address)}
+    <span className="inline-flex items-center gap-0.5">
+      <span className="text-text-muted text-xs font-mono" title={address}>
+        {truncateAddress(address)}
+      </span>
+      {showCopy && <CopyButton text={address} />}
     </span>
   );
 }
@@ -137,6 +173,7 @@ interface SearchResponse {
   query: string;
   isAddress: boolean;
   address?: string;
+  inputDomain?: string | null;
   addressDomain?: string | null;
   demo?: boolean;
   message?: string;
@@ -235,9 +272,12 @@ function ResultsContent() {
                         {data.addressDomain}
                       </span>
                     )}
-                    <p className="font-mono text-[11px] text-text-muted break-all">
-                      {data.address}
-                    </p>
+                    <div className="flex items-center gap-1">
+                      <p className="font-mono text-[11px] text-text-muted break-all">
+                        {data.address}
+                      </p>
+                      <CopyButton text={data.address} />
+                    </div>
                   </div>
                 )}
                 {data.demo && (

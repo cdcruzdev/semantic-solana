@@ -530,6 +530,83 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   };
 }
 
+// Resolve a domain name to a wallet address
+async function resolveDomainToAddress(domain: string): Promise<string | null> {
+  // Clean up input
+  let cleaned = domain.trim().toLowerCase();
+
+  // 1. Try .sol domain via Bonfida
+  if (cleaned.endsWith(".sol")) {
+    const name = cleaned.replace(/\.sol$/, "");
+    try {
+      const response = await fetch(
+        `https://sns-sdk-proxy.bonfida.workers.dev/resolve/${name}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.s === "ok" && data.result) {
+          return data.result;
+        }
+      }
+    } catch {
+      // Fall through
+    }
+    return null;
+  }
+
+  // 2. Try AllDomains TLD parser for .abc, .bonk, .poor, .id, .solana, .skr, etc.
+  // Check if it looks like a domain (has a dot)
+  if (cleaned.includes(".")) {
+    try {
+      const connection = new Connection(HELIUS_RPC_URL);
+      const parser = new TldParser(connection);
+      const owner = await parser.getOwnerFromDomainTld(cleaned);
+      if (owner) {
+        return typeof owner === "string" ? owner : owner.toBase58();
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 3. If no dot, try as .sol by default
+  if (!cleaned.includes(".")) {
+    try {
+      const response = await fetch(
+        `https://sns-sdk-proxy.bonfida.workers.dev/resolve/${cleaned}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.s === "ok" && data.result) {
+          return data.result;
+        }
+      }
+    } catch {
+      // Fall through
+    }
+
+    // Also try AllDomains common TLDs
+    const commonTlds = [".sol", ".abc", ".bonk", ".id", ".solana", ".poor", ".skr"];
+    for (const tld of commonTlds) {
+      if (tld === ".sol") continue; // Already tried above
+      try {
+        const connection = new Connection(HELIUS_RPC_URL);
+        const parser = new TldParser(connection);
+        const owner = await parser.getOwnerFromDomainTld(cleaned + tld);
+        if (owner) {
+          return typeof owner === "string" ? owner : owner.toBase58();
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
 // Resolve domains for addresses via Bonfida SNS + AllDomains TLD parser
 async function resolveDomains(addresses: string[]): Promise<Record<string, string>> {
   const domains: Record<string, string> = {};
@@ -566,8 +643,9 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
     }
   }
 
-  // 2. For unresolved addresses, try AllDomains TLD parser (main domain first, then any domain)
-  const unresolved = unique.filter(a => !domains[a]).slice(0, 5);
+  // 2. For the searched wallet only, try AllDomains TLD parser (main domain first, then any domain)
+  // Only resolve the first address to avoid RPC rate limits
+  const unresolved = unique.filter(a => !domains[a]).slice(0, 1);
   if (unresolved.length > 0) {
     try {
       const connection = new Connection(HELIUS_RPC_URL);
@@ -734,30 +812,41 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const isAddress = BASE58_REGEX.test(query);
+  let isAddress = BASE58_REGEX.test(query);
+  let resolvedAddress = query;
+  let inputDomain: string | null = null;
 
+  // If not a raw address, try resolving as a domain name
   if (!isAddress) {
-    return NextResponse.json({
-      query,
-      isAddress: false,
-      message:
-        "Paste a valid Solana wallet address to search transactions.",
-      transactions: [],
-    });
+    const resolved = await resolveDomainToAddress(query);
+    if (resolved) {
+      resolvedAddress = resolved;
+      inputDomain = query;
+      isAddress = true;
+    } else {
+      return NextResponse.json({
+        query,
+        isAddress: false,
+        message:
+          "Could not resolve domain. Try a wallet address or a domain like name.sol, name.abc, name.bonk",
+        transactions: [],
+      });
+    }
   }
 
   if (!HELIUS_API_KEY) {
     return NextResponse.json({
       query,
       isAddress: true,
-      address: query,
+      address: resolvedAddress,
+      inputDomain,
       demo: true,
       transactions: getMockTransactions(),
     });
   }
 
   try {
-    const url = `https://api.helius.xyz/v0/addresses/${query}/transactions?api-key=${HELIUS_API_KEY}`;
+    const url = `https://api.helius.xyz/v0/addresses/${resolvedAddress}/transactions?api-key=${HELIUS_API_KEY}`;
     const response = await fetch(url, {
       next: { revalidate: 30 },
     });
@@ -780,16 +869,16 @@ export async function GET(request: NextRequest) {
     }
 
     const rawTransactions: HeliusTransaction[] = await response.json();
-    let transactions = rawTransactions.map(tx => classifyTransaction(tx, query));
+    let transactions = rawTransactions.map(tx => classifyTransaction(tx, resolvedAddress));
 
     // Filter and collapse spam dust transfers
-    transactions = filterSpamTransactions(transactions, query);
+    transactions = filterSpamTransactions(transactions, resolvedAddress);
 
     // Collect unique addresses: searched wallet + counterparties
-    const addressSet = new Set<string>([query]);
+    const addressSet = new Set<string>([resolvedAddress]);
     for (const tx of transactions) {
-      if (tx.from && tx.from !== query) addressSet.add(tx.from);
-      if (tx.to && tx.to !== query) addressSet.add(tx.to);
+      if (tx.from && tx.from !== resolvedAddress) addressSet.add(tx.from);
+      if (tx.to && tx.to !== resolvedAddress) addressSet.add(tx.to);
     }
     // Resolve domains (capped at 10 addresses)
     const domains = await resolveDomains([...addressSet]);
@@ -803,8 +892,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       query,
       isAddress: true,
-      address: query,
-      addressDomain: domains[query] || null,
+      address: resolvedAddress,
+      inputDomain,
+      addressDomain: inputDomain || domains[resolvedAddress] || null,
       demo: false,
       transactions,
     });

@@ -50,7 +50,7 @@ export default function Home() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Wallet address or search query..."
+              placeholder="Wallet address or domain (e.g. name.sol, name.abc)..."
               className="flex-1 bg-surface border border-border rounded-lg px-5 py-4 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-sm"
               autoFocus
             />
