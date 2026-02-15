@@ -79,7 +79,7 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   "SSwapUtytk1dRPkyasFeqH2bAKSGqL5nnVz8JXaEhUR": "Saros",
   "Dooar9JkhdZ7J3LHN3A7YCuoGRUggXhQaG4kijfLGU2j": "Stepn Dex",
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": "Pump.fun",
-  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "Pump.fun AMM",
+  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "Pump.fun",
   // Jupiter ecosystem
   "PERPHjGBqRHArX4DySjwM6UJHiR3sWAatqfdBS2qQJu": "Jupiter Perpetuals",
   "DoVEsk76QybCEHQGzkvYPWLQu9gzNoZZZt3TPiL597e": "Jupiter DCA",
@@ -425,7 +425,7 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     // Clean up raw source names like "OKX_DEX_ROUTER" -> "OKX DEX"
     sourceName = tx.source
       .replace(/_/g, " ")
-      .replace(/\b(ROUTER|PROGRAM|CONTRACT|V\d+)\b/gi, "")
+      .replace(/\b(ROUTER|PROGRAM|CONTRACT|V\d+|AMM)\b/gi, "")
       .trim()
       .split(" ")
       .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
@@ -753,6 +753,59 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
         description = solAmt
           ? `Initialized token account (${solAmt} rent)`
           : "Initialized a new token account";
+      }
+      from = walletAddress;
+      break;
+    }
+
+    case "NFT_LISTING": {
+      const nft = tx.events?.nft;
+      if (nft && nft.description) {
+        // Parse Helius description: "user listed NFT_NAME for X SOL on MARKETPLACE"
+        const listMatch = nft.description.match(/listed (.+?) for ([\d.]+) SOL/);
+        if (listMatch) {
+          description = `Listed ${listMatch[1]} for ${listMatch[2]} SOL`;
+          amount = `${listMatch[2]} SOL`;
+        } else {
+          description = nft.description;
+        }
+        if (sourceName && !description.includes(sourceName)) description += ` on ${sourceName}`;
+      } else {
+        description = sourceName ? `Listed NFT on ${sourceName}` : "Listed NFT";
+      }
+      from = walletAddress;
+      break;
+    }
+
+    case "NFT_BID": {
+      const nft = tx.events?.nft;
+      const bidAmt = nft?.amount ? formatSol(nft.amount) : "";
+      description = bidAmt ? `Bid ${bidAmt} on NFT` : "Bid on NFT";
+      if (sourceName) description += ` on ${sourceName}`;
+      amount = bidAmt;
+      from = walletAddress;
+      break;
+    }
+
+    case "NFT_CANCEL_LISTING": {
+      description = sourceName ? `Delisted NFT on ${sourceName}` : "Delisted NFT";
+      from = walletAddress;
+      break;
+    }
+
+    case "FILL_ORDER":
+    case "EXECUTE_TRANSACTION": {
+      typeLabel = "Fulfill";
+      if (tokensSent.length > 0 && tokensReceived.length > 0) {
+        const inStr = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
+        const outStr = formatTokenAmount(tokensReceived[0].amount, tokensReceived[0].mint);
+        description = `Filled order: ${inStr} for ${outStr}`;
+        amount = inStr;
+      } else if (totalNativeSent > 0) {
+        description = `Filled order for ${formatSol(totalNativeSent)}`;
+        amount = formatSol(totalNativeSent);
+      } else {
+        description = sourceName ? `Filled order on ${sourceName}` : "Filled order";
       }
       from = walletAddress;
       break;

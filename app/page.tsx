@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 
 const EXAMPLES = [
   {
-    label: "Solana Foundation",
-    query: "GK2zqSsXhC64MFmzVJqFKxrFMQMFmptR7LGKMkNxNejr",
+    label: "toly.sol",
+    query: "toly.sol",
   },
   {
     label: "Jupiter Aggregator",

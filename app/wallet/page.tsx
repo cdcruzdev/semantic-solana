@@ -33,6 +33,7 @@ const TYPE_COLORS: Record<string, string> = {
   DCA: "bg-blue/15 text-blue border-blue/25",
   MULTISIG: "bg-yellow/15 text-yellow border-yellow/25",
   CLAIM: "bg-accent/15 text-accent border-accent/25",
+  FILL_ORDER: "bg-blue/15 text-blue border-blue/25",
   INITIALIZE_ACCOUNT: "bg-text-muted/15 text-text-dim border-text-muted/25",
   CLOSE_ACCOUNT: "bg-text-muted/15 text-text-dim border-text-muted/25",
   SPAM: "bg-text-muted/10 text-text-muted border-text-muted/20",
@@ -63,6 +64,8 @@ function getFilterCategory(type: string): string {
     case "STAKE_SOL":
     case "UNSTAKE_SOL":
     case "MULTISIG":
+    case "FILL_ORDER":
+    case "EXECUTE_TRANSACTION":
       return "DeFi";
     case "NFT_SALE":
     case "NFT_LISTING":
