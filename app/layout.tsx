@@ -21,9 +21,26 @@ const anybody = Anybody({
 });
 
 export const metadata: Metadata = {
-  title: "Semantic Solana - Human-Readable Transaction Search",
+  title: "Semantic Solana",
   description:
-    "Search any Solana wallet and get plain-English transaction descriptions. Understand swaps, transfers, mints, and more at a glance.",
+    "Search any Solana wallet and get plain-English transaction descriptions. Understand swaps, transfers, LP deposits, domain purchases, and more at a glance.",
+  keywords: ["solana", "blockchain", "explorer", "transaction", "wallet", "search", "domain", "defi"],
+  authors: [{ name: "cdcruzdev" }],
+  openGraph: {
+    title: "Semantic Solana",
+    description: "Human-readable Solana transaction search. Paste a wallet or domain, get plain English.",
+    url: "https://semantic-solana.vercel.app",
+    siteName: "Semantic Solana",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Semantic Solana",
+    description: "Human-readable Solana transaction search. Paste a wallet or domain, get plain English.",
+  },
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
