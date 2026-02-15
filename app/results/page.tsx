@@ -250,6 +250,7 @@ function ResultsContent() {
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "amount-high" | "amount-low">("newest");
   const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Debounced domain resolution for the search bar
@@ -313,8 +314,10 @@ function ResultsContent() {
                 onChange={(e) => setNewQuery(e.target.value)}
                 className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-xs sm:text-sm"
                 placeholder="Wallet address or domain..."
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setTimeout(() => setInputFocused(false), 200)}
               />
-              {newQuery.trim().includes(".") && !BASE58_REGEX.test(newQuery.trim()) && (resolving || resolveResult) && (
+              {inputFocused && newQuery.trim().includes(".") && !BASE58_REGEX.test(newQuery.trim()) && (resolving || resolveResult) && (
                 <div className="absolute left-0 right-0 top-full mt-1 bg-surface border border-border rounded-lg overflow-hidden shadow-lg z-50">
                   {resolving ? (
                     <div className="px-4 py-2 text-text-muted text-xs flex items-center gap-2">

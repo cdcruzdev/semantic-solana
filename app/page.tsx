@@ -33,6 +33,7 @@ export default function Home() {
   const [resolving, setResolving] = useState(false);
   const router = useRouter();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
 
   // Debounced domain resolution
   useEffect(() => {
@@ -99,9 +100,11 @@ export default function Home() {
                 placeholder="Wallet address or domain (e.g. name.sol, name.abc)..."
                 className="w-full bg-surface border border-border rounded-lg px-5 py-4 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-sm"
                 autoFocus
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setTimeout(() => setInputFocused(false), 200)}
               />
               {/* Domain resolution dropdown */}
-              {query.trim().includes(".") && !BASE58_REGEX.test(query.trim()) && (resolving || resolveResult) && (
+              {inputFocused && query.trim().includes(".") && !BASE58_REGEX.test(query.trim()) && (resolving || resolveResult) && (
                 <div className="absolute left-0 right-0 top-full mt-1 bg-surface border border-border rounded-lg overflow-hidden shadow-lg z-50">
                   {resolving ? (
                     <div className="px-5 py-3 text-text-muted text-sm flex items-center gap-2">
