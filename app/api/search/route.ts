@@ -1051,7 +1051,7 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
 
   // 2. For the searched wallet only, try AllDomains TLD parser (main domain first, then any domain)
   // Only resolve the first address to avoid RPC rate limits
-  const unresolved = unique.filter(a => !domains[a]).slice(0, 1);
+  const unresolved = unique.filter(a => !domains[a]).slice(0, 5);
   if (unresolved.length > 0) {
     try {
       const connection = new Connection(HELIUS_RPC_URL);

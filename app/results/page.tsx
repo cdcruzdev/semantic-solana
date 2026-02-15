@@ -141,8 +141,8 @@ function CopyButton({ text }: { text: string }) {
 function AddressDisplay({ address, domain, showCopy }: { address: string; domain?: string; showCopy?: boolean }) {
   if (domain) {
     return (
-      <span className="inline-flex items-center gap-0.5">
-        <span className="text-accent text-xs font-medium" title={address}>
+      <span className="inline-flex items-center gap-0.5 min-w-0">
+        <span className="text-accent text-xs font-medium truncate max-w-[120px] sm:max-w-[180px]" title={`${domain} (${address})`}>
           {domain}
         </span>
         {showCopy && <CopyButton text={address} />}
@@ -150,8 +150,8 @@ function AddressDisplay({ address, domain, showCopy }: { address: string; domain
     );
   }
   return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="text-text-muted text-xs font-mono" title={address}>
+    <span className="inline-flex items-center gap-0.5 min-w-0">
+      <span className="text-text-muted text-xs font-mono truncate" title={address}>
         {truncateAddress(address)}
       </span>
       {showCopy && <CopyButton text={address} />}
