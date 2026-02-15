@@ -9,8 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@tailwindcss/oxide-win32-x64-msvc": "^4.1.18",
-    "lightningcss-win32-x64-msvc": "^1.31.1",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"
