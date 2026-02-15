@@ -35,10 +35,11 @@ export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-16">
       <div className="w-full max-w-2xl text-center">
-        <h1 className="font-heading text-5xl md:text-6xl font-bold text-sand mb-4 tracking-tight">
+        <h1 className="font-heading text-5xl md:text-6xl font-black text-text mb-3 tracking-tight">
           Semantic Solana
         </h1>
-        <p className="text-sand-dark text-lg md:text-xl mb-12 max-w-lg mx-auto leading-relaxed">
+        <div className="w-16 h-1 bg-accent mx-auto mb-6 rounded-full" />
+        <p className="text-text-dim text-lg md:text-xl mb-12 max-w-lg mx-auto leading-relaxed">
           Paste a wallet address. Get human-readable transaction history. No
           jargon, no hex dumps.
         </p>
@@ -50,12 +51,12 @@ export default function Home() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Wallet address or search query..."
-              className="flex-1 bg-navy-light border border-navy-lighter rounded-lg px-5 py-4 text-sand placeholder-gray-500 focus:outline-none focus:border-teal focus:ring-1 focus:ring-teal transition-all duration-200 font-mono text-sm"
+              className="flex-1 bg-surface border border-border rounded-lg px-5 py-4 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-sm"
               autoFocus
             />
             <button
               type="submit"
-              className="bg-teal hover:bg-teal-dark text-navy font-semibold px-8 py-4 rounded-lg cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-teal/20 active:scale-[0.98]"
+              className="bg-accent hover:bg-accent-dim text-base font-semibold px-8 py-4 rounded-lg cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-accent-glow active:scale-[0.98]"
             >
               Search
             </button>
@@ -63,7 +64,7 @@ export default function Home() {
         </form>
 
         <div className="space-y-3">
-          <p className="text-gray-500 text-sm uppercase tracking-wider font-medium">
+          <p className="text-text-muted text-sm uppercase tracking-wider font-medium">
             Try an example
           </p>
           <div className="flex flex-wrap justify-center gap-3">
@@ -71,7 +72,7 @@ export default function Home() {
               <button
                 key={ex.label}
                 onClick={() => handleExample(ex.query)}
-                className="bg-navy-light border border-navy-lighter hover:border-teal text-sand-dark hover:text-teal px-4 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200"
+                className="bg-surface border border-border hover:border-accent text-text-dim hover:text-accent px-4 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200"
               >
                 {ex.label}
               </button>
@@ -80,7 +81,7 @@ export default function Home() {
         </div>
       </div>
 
-      <footer className="fixed bottom-0 left-0 right-0 py-4 text-center text-gray-500 text-xs">
+      <footer className="fixed bottom-0 left-0 right-0 py-4 text-center text-text-muted text-xs">
         Powered by Helius API
       </footer>
     </main>

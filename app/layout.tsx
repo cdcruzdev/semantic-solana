@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, IBM_Plex_Mono, Fraunces } from "next/font/google";
+import { IBM_Plex_Sans, IBM_Plex_Mono, Anybody } from "next/font/google";
 import "./globals.css";
 
 const ibmPlexSans = IBM_Plex_Sans({
@@ -14,8 +14,8 @@ const ibmPlexMono = IBM_Plex_Mono({
   weight: ["400", "500"],
 });
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+const anybody = Anybody({
+  variable: "--font-anybody",
   subsets: ["latin"],
   weight: ["400", "600", "700", "900"],
 });
@@ -34,7 +34,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${fraunces.variable} antialiased`}
+        className={`${ibmPlexSans.variable} ${ibmPlexMono.variable} ${anybody.variable} antialiased`}
       >
         {children}
       </body>
