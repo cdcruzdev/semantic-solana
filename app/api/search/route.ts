@@ -281,8 +281,19 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     }
   }
 
-  // Source label
-  const sourceName = getProgramName(tx.source) || tx.source || "";
+  // Source label - clean up raw program names
+  let sourceName = getProgramName(tx.source) || "";
+  if (!sourceName && tx.source) {
+    // Clean up raw source names like "OKX_DEX_ROUTER" -> "OKX DEX"
+    sourceName = tx.source
+      .replace(/_/g, " ")
+      .replace(/\b(ROUTER|PROGRAM|CONTRACT|V\d+)\b/gi, "")
+      .trim()
+      .split(" ")
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ")
+      .trim();
+  }
 
   // Build description based on type
   switch (type) {
@@ -317,10 +328,16 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
         } else if (inputStr) {
           description = `Swapped ${inputStr}`;
           amount = inputStr;
+        } else if (tx.description && tx.description.length > 10) {
+          // Use Helius description if we couldn't parse swap details
+          description = tx.description;
         } else {
           description = "Swapped tokens";
         }
         if (sourceName) description += ` on ${sourceName}`;
+      } else if (tx.description && tx.description.length > 10) {
+        description = tx.description;
+        if (sourceName && !description.includes(sourceName)) description += ` on ${sourceName}`;
       } else {
         description = "Swapped tokens";
         if (sourceName) description += ` on ${sourceName}`;
@@ -548,6 +565,54 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
   return domains;
 }
 
+// Dust threshold: transfers below this are likely spam (10,000 lamports = 0.00001 SOL)
+const DUST_THRESHOLD_LAMPORTS = 10000;
+const DUST_THRESHOLD_SOL = DUST_THRESHOLD_LAMPORTS / 1e9;
+
+function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress: string): ParsedTransaction[] {
+  const filtered: ParsedTransaction[] = [];
+  let dustCount = 0;
+  let dustTotalLamports = 0;
+  const dustSenders = new Set<string>();
+
+  for (const tx of transactions) {
+    // Check if this is a dust transfer (tiny amount received from unknown address)
+    if (tx.type === "TRANSFER" && tx.to === walletAddress) {
+      // Parse the amount to check if it's dust
+      const amountMatch = tx.amount.match(/([\d.e+-]+)\s*SOL/i);
+      if (amountMatch) {
+        const solAmount = parseFloat(amountMatch[1]);
+        if (solAmount > 0 && solAmount < DUST_THRESHOLD_SOL) {
+          dustCount++;
+          dustTotalLamports += Math.round(solAmount * 1e9);
+          if (tx.from) dustSenders.add(tx.from);
+          continue; // Skip this dust tx
+        }
+      }
+    }
+    filtered.push(tx);
+  }
+
+  // If we filtered dust, add a single summary row
+  if (dustCount > 0) {
+    const dustSol = dustTotalLamports / 1e9;
+    filtered.push({
+      signature: `dust-summary-${Date.now()}`,
+      timestamp: transactions[transactions.length - 1]?.timestamp || Math.floor(Date.now() / 1000),
+      type: "SPAM",
+      typeLabel: "Dust Spam",
+      description: `${dustCount} dust transfer${dustCount > 1 ? "s" : ""} (${dustSol.toExponential(2)} SOL total) from ${dustSenders.size} address${dustSenders.size > 1 ? "es" : ""}`,
+      amount: `${dustSol.toExponential(2)} SOL`,
+      from: dustSenders.size === 1 ? [...dustSenders][0] : "",
+      to: walletAddress,
+      fee: 0,
+      source: "SPAM",
+    });
+  }
+
+  return filtered;
+}
+
 function getMockTransactions(): ParsedTransaction[] {
   const now = Math.floor(Date.now() / 1000);
   return [
@@ -671,7 +736,10 @@ export async function GET(request: NextRequest) {
     }
 
     const rawTransactions: HeliusTransaction[] = await response.json();
-    const transactions = rawTransactions.map(tx => classifyTransaction(tx, query));
+    let transactions = rawTransactions.map(tx => classifyTransaction(tx, query));
+
+    // Filter and collapse spam dust transfers
+    transactions = filterSpamTransactions(transactions, query);
 
     // Collect unique addresses: searched wallet + counterparties
     const addressSet = new Set<string>([query]);
