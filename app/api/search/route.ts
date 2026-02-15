@@ -51,6 +51,27 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   "Dooar9JkhdZ7J3LHN3A7YCuoGRUggXhQaG4kijfLGU2j": "Stepn Dex",
   "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": "Pump.fun",
   "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "Pump.fun AMM",
+  // Jupiter ecosystem
+  "PERPHjGBqRHArX4DySjwM6UJHiR3sWAatqfdBS2qQJu": "Jupiter Perpetuals",
+  "DoVEsk76QybCEHQGzkvYPWLQu9gzNoZZZt3TPiL597e": "Jupiter DCA",
+  "proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u": "Okx Dex",
+  "DF1ow4tspfHX9JwWJsAb9epbkA8hmpSEAtxXy1V27QBH": "DFlow",
+  // Multisig / governance
+  "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf": "Squads",
+  // DiversiFi
+  "61DFfeTKM7trxYcPQCM78bJ794ddZprZpAwAnLiwTpYH": "DiversiFi",
+  // AllDomains TLD programs
+  "TLDHkysf5pCnKsVA4gXpNvmy7psXLPEu4LAdDJthT9S": "AllDomains",
+  "TCSVHqadS2swhap43BnZtmeEAPNXfpc3w2HLBredVaR": "AllDomains",
+  "ALTNSZ46uaAUU7XUV6awvdorLGqAsPwa9shm7h4uP2FK": "AllDomains",
+  "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95": "AllDomains",
+  "3vyr9DRfMZb2KvUQdnps7YG3PY38XdguLBQaJ2DFkSxk": "AllDomains",
+  // Compressed NFT
+  "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY": "Bubblegum",
+  // Poseidon
+  "HLsgAVzjjBaBR9QCLqV3vjC9LTnR2xtmtB77j1EJQBsZ": "Poseidon",
+  // Memo
+  "MemoSq4gqABAXKb96qnH8Tys": "Memo",
 };
 
 // Known token mints
@@ -455,6 +476,36 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     }
 
     case "TRANSFER": {
+      // Detect LP deposits disguised as transfers (e.g. Meteora)
+      const transferProtocol = detectProtocol(tx);
+      const lpLikeProtocols = ["Meteora", "Meteora (Pools)", "Orca", "Raydium CLMM", "Raydium"];
+      // Squads multisig
+      if ((tx.source || "").toUpperCase().includes("SQUADS") || transferProtocol === "Squads") {
+        typeLabel = "Multisig";
+        if (tokensReceived.length > 0) {
+          const t = tokensReceived[0];
+          const amtStr = formatTokenAmount(t.amount, t.mint);
+          description = `Received ${amtStr} via Squads multisig`;
+          amount = amtStr;
+        } else if (totalNativeReceived > 0) {
+          description = `Received ${formatSol(totalNativeReceived)} via Squads multisig`;
+          amount = formatSol(totalNativeReceived);
+        } else {
+          description = "Squads multisig transaction";
+        }
+        from = walletAddress;
+        break;
+      }
+      if (transferProtocol && lpLikeProtocols.includes(transferProtocol) && tokensSent.length > 0 && totalNativeSent > 0) {
+        typeLabel = "LP Deposit";
+        const parts: string[] = [];
+        if (totalNativeSent > 0) parts.push(formatSol(totalNativeSent));
+        for (const t of tokensSent) parts.push(formatTokenAmount(t.amount, t.mint));
+        description = `Deposited ${parts.join(" + ")} into ${transferProtocol} LP`;
+        amount = parts[0] || "";
+        from = walletAddress;
+        break;
+      }
       if (domainService) {
         // Domain purchase - try to extract domain name from Helius description
         typeLabel = "Domain";
@@ -533,21 +584,42 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     }
 
     case "CLOSE_ACCOUNT": {
-      // Closing token accounts reclaims rent
-      const reclaimedSol = totalNativeReceived > 0 ? formatSol(totalNativeReceived) : "";
-      if (tokensSent.length > 0 || tokensReceived.length > 0) {
-        const tokenAmt = tokensReceived.length > 0
-          ? formatTokenAmount(tokensReceived[0].amount, tokensReceived[0].mint)
-          : tokensSent.length > 0
-            ? formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint)
-            : "";
-        description = tokenAmt
-          ? `Closed token account, reclaimed ${reclaimedSol || "rent"} (had ${tokenAmt})`
-          : `Closed token account${reclaimedSol ? `, reclaimed ${reclaimedSol}` : ""}`;
+      const protocol = detectProtocol(tx);
+      // Detect LP operations: if wallet sends tokens to a pool via Raydium CLMM / Orca / Meteora,
+      // this is actually an LP deposit or withdrawal, not just "closing an account"
+      const lpProtocols = ["Raydium CLMM", "Orca", "Meteora", "Meteora (Pools)"];
+      if (protocol && lpProtocols.includes(protocol)) {
+        // Wallet sends tokens to pool = depositing into LP
+        if (tokensSent.length > 0) {
+          typeLabel = "LP Deposit";
+          const parts: string[] = [];
+          for (const t of tokensSent) {
+            if (t.mint === "So11111111111111111111111111111111111111112") {
+              parts.push(formatSol(Math.round(t.amount * 1e9)));
+            } else {
+              parts.push(formatTokenAmount(t.amount, t.mint));
+            }
+          }
+          description = `Deposited ${parts.join(" + ")} into ${protocol} LP`;
+          amount = parts[0] || "";
+        } else if (tokensReceived.length > 0) {
+          typeLabel = "LP Withdraw";
+          const parts: string[] = [];
+          for (const t of tokensReceived) {
+            parts.push(formatTokenAmount(t.amount, t.mint));
+          }
+          description = `Withdrew ${parts.join(" + ")} from ${protocol} LP`;
+          amount = parts[0] || "";
+        } else {
+          typeLabel = "LP Close";
+          description = `Closed LP position on ${protocol}`;
+        }
       } else {
+        // Regular account close
+        const reclaimedSol = totalNativeReceived > 0 ? formatSol(totalNativeReceived) : "";
         description = `Closed account${reclaimedSol ? `, reclaimed ${reclaimedSol}` : ""}`;
+        amount = reclaimedSol;
       }
-      amount = reclaimedSol;
       from = walletAddress;
       break;
     }
@@ -627,14 +699,20 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
       const protocol = detectProtocol(tx) || sourceName;
       const solAmt = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
 
-      // Check if tokens were also sent (deposit pattern)
-      if (tokensSent.length > 0 && protocol) {
+      // Check token flows to determine what happened
+      if (tokensReceived.length > 0 && protocol) {
+        // Received tokens while initializing = claiming/withdrawing from protocol
+        typeLabel = "Claim";
+        const tokenAmt = formatTokenAmount(tokensReceived[0].amount, tokensReceived[0].mint);
+        description = `Claimed ${tokenAmt} from ${protocol}`;
+        if (solAmt) description += ` (${solAmt} rent for new account)`;
+        amount = tokenAmt;
+      } else if (tokensSent.length > 0 && protocol) {
         typeLabel = "Deposit";
         const tokenAmt = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
         description = `Deposited ${tokenAmt} into ${protocol}`;
         if (solAmt) description += ` (${solAmt} rent)`;
         amount = tokenAmt;
-        // We'll override type in the return below
       } else if (protocol && protocol !== "Associated Token") {
         typeLabel = "Setup";
         description = solAmt
@@ -662,6 +740,58 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
       break;
     }
 
+    case "CREATE": {
+      // Domain registration
+      if (domainService || (tx.source || "").toUpperCase().includes("ALLDOMAINS")) {
+        typeLabel = "Domain";
+        const domainName = extractDomainName(tx.description || "");
+        const cost = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
+        const tokenCost = tokensSent.length > 0 ? formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint) : "";
+        const costStr = tokenCost || cost;
+        if (domainName && costStr) {
+          description = `Registered ${domainName} for ${costStr}`;
+        } else if (domainName) {
+          description = `Registered ${domainName}`;
+        } else if (costStr) {
+          description = `Registered a domain for ${costStr}`;
+        } else {
+          description = "Registered a domain";
+        }
+        amount = costStr;
+      } else {
+        const proto = detectProtocol(tx);
+        description = proto ? `Created account on ${proto}` : "Created account";
+      }
+      from = walletAddress;
+      break;
+    }
+
+    case "CLOSE": {
+      if (domainService || (tx.source || "").toUpperCase().includes("ALLDOMAINS")) {
+        typeLabel = "Domain";
+        const domainName = extractDomainName(tx.description || "");
+        description = domainName ? `Transferred domain ${domainName}` : "Domain transfer/close";
+      } else {
+        const proto = detectProtocol(tx);
+        description = proto ? `Closed account on ${proto}` : "Closed account";
+      }
+      from = walletAddress;
+      break;
+    }
+
+    case "UPDATE": {
+      if (domainService || (tx.source || "").toUpperCase().includes("ALLDOMAINS")) {
+        typeLabel = "Domain";
+        const domainName = extractDomainName(tx.description || "");
+        description = domainName ? `Updated domain ${domainName}` : "Updated domain settings";
+      } else {
+        const proto = detectProtocol(tx);
+        description = proto ? `Updated settings on ${proto}` : "Updated account";
+      }
+      from = walletAddress;
+      break;
+    }
+
     default: {
       // Check if domain related even with UNKNOWN type
       if (domainService) {
@@ -680,29 +810,98 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
         amount = cost;
       } else {
         const protocol = detectProtocol(tx) || sourceName;
-        // Best effort from transfers
-        if (totalNativeSent > 0 && totalNativeReceived === 0) {
-          description = `Sent ${formatSol(totalNativeSent)}`;
-          amount = formatSol(totalNativeSent);
-          if (protocol) description += ` to ${protocol}`;
-        } else if (totalNativeReceived > 0 && totalNativeSent === 0) {
-          description = `Received ${formatSol(totalNativeReceived)}`;
-          amount = formatSol(totalNativeReceived);
-          if (protocol) description += ` from ${protocol}`;
-        } else if (tokensSent.length > 0) {
-          const t = tokensSent[0];
-          description = `Sent ${formatTokenAmount(t.amount, t.mint)}`;
-          amount = formatTokenAmount(t.amount, t.mint);
-          if (protocol) description += ` to ${protocol}`;
-        } else if (tokensReceived.length > 0) {
-          const t = tokensReceived[0];
-          description = `Received ${formatTokenAmount(t.amount, t.mint)}`;
-          amount = formatTokenAmount(t.amount, t.mint);
-          if (protocol) description += ` from ${protocol}`;
-        } else if (tx.description) {
-          description = tx.description;
+
+        // Smart classification based on detected protocol
+        if (protocol === "Jupiter Perpetuals") {
+          typeLabel = "Perps";
+          if (tokensSent.length > 0) {
+            const t = tokensSent[0];
+            const amtStr = formatTokenAmount(t.amount, t.mint);
+            description = `Opened perp position with ${amtStr} on Jupiter`;
+            amount = amtStr;
+          } else if (tokensReceived.length > 0) {
+            const t = tokensReceived[0];
+            const amtStr = formatTokenAmount(t.amount, t.mint);
+            description = `Closed perp position, received ${amtStr} from Jupiter`;
+            amount = amtStr;
+          } else if (totalNativeReceived > totalNativeSent) {
+            const net = formatSol(totalNativeReceived - totalNativeSent);
+            description = `Closed perp position on Jupiter (reclaimed ${net})`;
+            amount = net;
+          } else {
+            description = "Jupiter Perpetuals trade";
+          }
+        } else if (protocol === "Jupiter DCA") {
+          typeLabel = "DCA";
+          if (tokensSent.length > 0) {
+            const t = tokensSent[0];
+            const amtStr = formatTokenAmount(t.amount, t.mint);
+            description = `Set up DCA order for ${amtStr} on Jupiter`;
+            amount = amtStr;
+          } else if (tokensReceived.length > 0) {
+            const t = tokensReceived[0];
+            const amtStr = formatTokenAmount(t.amount, t.mint);
+            description = `DCA order filled, received ${amtStr}`;
+            amount = amtStr;
+          } else {
+            description = "Jupiter DCA order";
+          }
+        } else if (protocol === "DFlow") {
+          // DFlow is a swap router
+          typeLabel = "Swap";
+          if (tokensSent.length > 0 && tokensReceived.length > 0) {
+            const inStr = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
+            const outStr = formatTokenAmount(tokensReceived[tokensReceived.length - 1].amount, tokensReceived[tokensReceived.length - 1].mint);
+            description = `Swapped ${inStr} for ${outStr} via DFlow`;
+            amount = inStr;
+          } else {
+            description = "Swapped tokens via DFlow";
+          }
+        } else if (protocol === "Squads") {
+          typeLabel = "Multisig";
+          if (tokensSent.length > 0) {
+            const t = tokensSent[0];
+            description = `Multisig payout: ${formatTokenAmount(t.amount, t.mint)}`;
+            amount = formatTokenAmount(t.amount, t.mint);
+          } else if (totalNativeSent > 0) {
+            description = `Multisig payout: ${formatSol(totalNativeSent)}`;
+            amount = formatSol(totalNativeSent);
+          } else {
+            description = "Squads multisig transaction";
+          }
         } else {
-          description = protocol ? `Interacted with ${protocol}` : typeLabel;
+          // Generic fallback with protocol context
+          if (totalNativeSent > 0 && totalNativeReceived === 0) {
+            description = `Sent ${formatSol(totalNativeSent)}`;
+            amount = formatSol(totalNativeSent);
+            if (protocol) description += ` to ${protocol}`;
+          } else if (totalNativeReceived > 0 && totalNativeSent === 0) {
+            description = `Received ${formatSol(totalNativeReceived)}`;
+            amount = formatSol(totalNativeReceived);
+            if (protocol) description += ` from ${protocol}`;
+          } else if (tokensSent.length > 0 && tokensReceived.length > 0) {
+            // Looks like a swap
+            typeLabel = "Swap";
+            const inStr = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
+            const outStr = formatTokenAmount(tokensReceived[tokensReceived.length - 1].amount, tokensReceived[tokensReceived.length - 1].mint);
+            description = `Swapped ${inStr} for ${outStr}`;
+            amount = inStr;
+            if (protocol) description += ` on ${protocol}`;
+          } else if (tokensSent.length > 0) {
+            const t = tokensSent[0];
+            description = `Sent ${formatTokenAmount(t.amount, t.mint)}`;
+            amount = formatTokenAmount(t.amount, t.mint);
+            if (protocol) description += ` to ${protocol}`;
+          } else if (tokensReceived.length > 0) {
+            const t = tokensReceived[0];
+            description = `Received ${formatTokenAmount(t.amount, t.mint)}`;
+            amount = formatTokenAmount(t.amount, t.mint);
+            if (protocol) description += ` from ${protocol}`;
+          } else if (tx.description) {
+            description = tx.description;
+          } else {
+            description = protocol ? `Interacted with ${protocol}` : typeLabel;
+          }
         }
       }
     }
@@ -716,7 +915,17 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   return {
     signature: tx.signature,
     timestamp: tx.timestamp,
-    type: domainService ? "DOMAIN" : (typeLabel === "Deposit" ? "DEPOSIT" : type),
+    type: domainService ? "DOMAIN" : 
+          typeLabel === "Deposit" ? "DEPOSIT" :
+          typeLabel === "LP Deposit" ? "LP_DEPOSIT" :
+          typeLabel === "LP Withdraw" ? "LP_WITHDRAW" :
+          typeLabel === "LP Close" ? "CLOSE_POSITION" :
+          typeLabel === "Perps" ? "PERPS" :
+          typeLabel === "DCA" ? "DCA" :
+          typeLabel === "Multisig" ? "MULTISIG" :
+          typeLabel === "Claim" ? "CLAIM" :
+          typeLabel === "Swap" && type === "UNKNOWN" ? "SWAP" :
+          type,
     typeLabel,
     description,
     amount,
