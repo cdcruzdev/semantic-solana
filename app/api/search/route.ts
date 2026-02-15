@@ -566,22 +566,41 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
     }
   }
 
-  // 2. For the first unresolved address (searched wallet), try AllDomains TLD parser
-  const primaryUnresolved = unique.find(a => !domains[a]);
-  if (primaryUnresolved) {
+  // 2. For unresolved addresses, try AllDomains TLD parser (main domain first, then any domain)
+  const unresolved = unique.filter(a => !domains[a]).slice(0, 5);
+  if (unresolved.length > 0) {
     try {
       const connection = new Connection(HELIUS_RPC_URL);
       const parser = new TldParser(connection);
-      const pubkey = new PublicKey(primaryUnresolved);
-      const userDomains = await parser.getParsedAllUserDomains(pubkey);
-      if (userDomains && userDomains.length > 0) {
-        // Pick the shortest non-.sol domain (Bonfida already handles .sol)
-        const nonSol = userDomains.filter(d => !d.domain.endsWith(".sol"));
-        const best = nonSol.length > 0
-          ? nonSol.sort((a, b) => a.domain.length - b.domain.length)[0]
-          : userDomains.sort((a, b) => a.domain.length - b.domain.length)[0];
-        domains[primaryUnresolved] = best.domain;
-      }
+
+      await Promise.allSettled(
+        unresolved.map(async (addr) => {
+          try {
+            const pubkey = new PublicKey(addr);
+            // Try main domain first (user's preferred/set domain)
+            try {
+              const main = await parser.getMainDomain(pubkey);
+              if (main && main.domain && main.tld) {
+                domains[addr] = main.domain + main.tld;
+                return;
+              }
+            } catch {
+              // No main domain set, fall through
+            }
+            // Fallback: get all domains and pick shortest
+            const userDomains = await parser.getParsedAllUserDomains(pubkey);
+            if (userDomains && userDomains.length > 0) {
+              const nonSol = userDomains.filter(d => !d.domain.endsWith(".sol"));
+              const best = nonSol.length > 0
+                ? nonSol.sort((a, b) => a.domain.length - b.domain.length)[0]
+                : userDomains.sort((a, b) => a.domain.length - b.domain.length)[0];
+              domains[addr] = best.domain;
+            }
+          } catch {
+            // Best-effort
+          }
+        })
+      );
     } catch {
       // AllDomains resolution is best-effort
     }
