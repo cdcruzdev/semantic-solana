@@ -40,6 +40,17 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB": "Meteora (Pools)",
   "stake11111111111111111111111111111111111111": "Stake Program",
   "ComputeBudget111111111111111111111111111111": "Compute Budget",
+  // DeFi protocols
+  "div5eMqGmAFLGLi3eUHuFnHYkeGaphKiGat5Mn2YP1Uo": "DiversiFi",
+  "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD": "Marinade",
+  "9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP": "Orca (Legacy)",
+  "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK": "Raydium CLMM",
+  "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS": "Raydium Route",
+  "FLUXubRmkEi2q6K3Y5o2jQKJ2AGonzPEtxhBs5PuFRGo": "FluxBeam",
+  "SSwapUtytk1dRPkyasFeqH2bAKSGqL5nnVz8JXaEhUR": "Saros",
+  "Dooar9JkhdZ7J3LHN3A7YCuoGRUggXhQaG4kijfLGU2j": "Stepn Dex",
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": "Pump.fun",
+  "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": "Pump.fun AMM",
 };
 
 // Known token mints
@@ -222,6 +233,68 @@ function detectDomainProgram(tx: HeliusTransaction): string | null {
   return null;
 }
 
+// Detect the main DeFi/app protocol from instructions
+function detectProtocol(tx: HeliusTransaction): string | null {
+  const skipPrograms = new Set([
+    "11111111111111111111111111111111",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "ComputeBudget111111111111111111111111111111",
+    "So11111111111111111111111111111111111111112",
+  ]);
+
+  if (tx.instructions) {
+    for (const ix of tx.instructions) {
+      if (!skipPrograms.has(ix.programId)) {
+        const name = getProgramName(ix.programId);
+        if (name) return name;
+      }
+      if (ix.innerInstructions) {
+        for (const inner of ix.innerInstructions) {
+          if (!skipPrograms.has(inner.programId)) {
+            const name = getProgramName(inner.programId);
+            if (name) return name;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Try to extract domain name from Helius description
+function extractDomainName(description: string): string | null {
+  // Helius descriptions often contain things like "cdcruz.abc registered" or "registered cdcruz.abc"
+  const domainPattern = /\b([a-zA-Z0-9-]+\.(sol|abc|bonk|poor|id|solana|skr|com|io|dev))\b/i;
+  const match = description.match(domainPattern);
+  return match ? match[1] : null;
+}
+
+// Get token symbol from balance changes as fallback
+function getTokensFromBalanceChanges(tx: HeliusTransaction, walletAddress: string): { sent: {symbol: string; amount: number}[]; received: {symbol: string; amount: number}[] } {
+  const sent: {symbol: string; amount: number}[] = [];
+  const received: {symbol: string; amount: number}[] = [];
+
+  if (!tx.accountData) return { sent, received };
+
+  for (const acct of tx.accountData) {
+    if (acct.account !== walletAddress) continue;
+    for (const change of acct.tokenBalanceChanges || []) {
+      const rawAmt = Number(change.rawTokenAmount.tokenAmount);
+      const decimals = change.rawTokenAmount.decimals;
+      const amount = Math.abs(rawAmt) / Math.pow(10, decimals);
+      const symbol = getTokenSymbol(change.mint);
+      if (rawAmt < 0) {
+        sent.push({ symbol, amount });
+      } else if (rawAmt > 0) {
+        received.push({ symbol, amount });
+      }
+    }
+  }
+
+  return { sent, received };
+}
+
 function classifyTransaction(tx: HeliusTransaction, walletAddress: string): ParsedTransaction {
   const type = (tx.type || "UNKNOWN").toUpperCase();
 
@@ -315,17 +388,15 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     case "SWAP": {
       typeLabel = "Swap";
       const swap = tx.events?.swap;
-      if (swap) {
-        let inputStr = "";
-        let outputStr = "";
+      let inputStr = "";
+      let outputStr = "";
 
+      if (swap) {
         if (swap.nativeInput) {
           inputStr = formatSol(Number(swap.nativeInput.amount));
         } else if (swap.tokenInputs && swap.tokenInputs.length > 0) {
           const inp = swap.tokenInputs[0];
           inputStr = formatTokenAmount(inp.tokenAmount, inp.mint);
-        } else if (totalNativeSent > 0) {
-          inputStr = formatSol(totalNativeSent);
         }
 
         if (swap.nativeOutput) {
@@ -333,48 +404,71 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
         } else if (swap.tokenOutputs && swap.tokenOutputs.length > 0) {
           const out = swap.tokenOutputs[0];
           outputStr = formatTokenAmount(out.tokenAmount, out.mint);
+        }
+      }
+
+      // Fallback: use tokenTransfers if swap events are sparse
+      if (!inputStr && !outputStr) {
+        if (tokensSent.length > 0) {
+          inputStr = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
+        } else if (totalNativeSent > 0) {
+          inputStr = formatSol(totalNativeSent);
+        }
+        if (tokensReceived.length > 0) {
+          outputStr = formatTokenAmount(tokensReceived[0].amount, tokensReceived[0].mint);
         } else if (totalNativeReceived > 0) {
           outputStr = formatSol(totalNativeReceived);
         }
+      }
 
-        // Filter out zero amounts
-        if (inputStr.startsWith("0 ")) inputStr = "";
-        if (outputStr.startsWith("0 ")) outputStr = "";
-
-        if (inputStr && outputStr) {
-          description = `Swapped ${inputStr} for ${outputStr}`;
-          amount = inputStr;
-        } else if (inputStr) {
-          description = `Swapped ${inputStr}`;
-          amount = inputStr;
-        } else if (outputStr) {
-          description = `Received ${outputStr} from swap`;
-          amount = outputStr;
-        } else if (tx.description && tx.description.length > 10) {
-          // Use Helius description if we couldn't parse swap details
-          description = tx.description;
-        } else {
-          description = "Swapped tokens";
+      // Last resort: balance changes
+      if (!inputStr && !outputStr) {
+        const balChanges = getTokensFromBalanceChanges(tx, walletAddress);
+        if (balChanges.sent.length > 0) {
+          inputStr = `${floorTo4(balChanges.sent[0].amount)} ${balChanges.sent[0].symbol}`;
         }
-        if (sourceName) description += ` on ${sourceName}`;
+        if (balChanges.received.length > 0) {
+          outputStr = `${floorTo4(balChanges.received[0].amount)} ${balChanges.received[0].symbol}`;
+        }
+      }
+
+      // Filter out zero amounts
+      if (inputStr.startsWith("0 ")) inputStr = "";
+      if (outputStr.startsWith("0 ")) outputStr = "";
+
+      if (inputStr && outputStr) {
+        description = `Swapped ${inputStr} for ${outputStr}`;
+        amount = inputStr;
+      } else if (inputStr) {
+        description = `Swapped ${inputStr}`;
+        amount = inputStr;
+      } else if (outputStr) {
+        description = `Received ${outputStr} from swap`;
+        amount = outputStr;
       } else if (tx.description && tx.description.length > 10) {
         description = tx.description;
-        if (sourceName && !description.includes(sourceName)) description += ` on ${sourceName}`;
       } else {
         description = "Swapped tokens";
-        if (sourceName) description += ` on ${sourceName}`;
       }
+      if (sourceName) description += ` on ${sourceName}`;
       break;
     }
 
     case "TRANSFER": {
       if (domainService) {
-        // Domain purchase
+        // Domain purchase - try to extract domain name from Helius description
         typeLabel = "Domain";
+        const domainName = extractDomainName(tx.description || "");
         const cost = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
-        description = cost
-          ? `Bought a domain from ${domainService} for ${cost}`
-          : `Registered a domain via ${domainService}`;
+        if (domainName && cost) {
+          description = `Bought ${domainName} for ${cost}`;
+        } else if (domainName) {
+          description = `Registered ${domainName}`;
+        } else if (cost) {
+          description = `Bought a domain on ${domainService} for ${cost}`;
+        } else {
+          description = `Registered a domain on ${domainService}`;
+        }
         amount = cost;
         from = walletAddress;
         to = nativeDests[0] || "";
@@ -530,13 +624,29 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
     }
 
     case "INITIALIZE_ACCOUNT": {
-      typeLabel = "Init Account";
+      const protocol = detectProtocol(tx) || sourceName;
       const solAmt = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
-      description = solAmt
-        ? `Initialized account (${solAmt} rent)`
-        : "Initialized a new account";
-      if (sourceName && sourceName !== "Unknown") description += ` via ${sourceName}`;
-      amount = solAmt;
+
+      // Check if tokens were also sent (deposit pattern)
+      if (tokensSent.length > 0 && protocol) {
+        typeLabel = "Deposit";
+        const tokenAmt = formatTokenAmount(tokensSent[0].amount, tokensSent[0].mint);
+        description = `Deposited ${tokenAmt} into ${protocol}`;
+        if (solAmt) description += ` (${solAmt} rent)`;
+        amount = tokenAmt;
+        // We'll override type in the return below
+      } else if (protocol && protocol !== "Associated Token") {
+        typeLabel = "Setup";
+        description = solAmt
+          ? `Set up account on ${protocol} (${solAmt} rent)`
+          : `Set up account on ${protocol}`;
+        amount = solAmt;
+      } else {
+        typeLabel = "Init Account";
+        description = solAmt
+          ? `Initialized token account (${solAmt} rent)`
+          : "Initialized a new token account";
+      }
       from = walletAddress;
       break;
     }
@@ -556,25 +666,44 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
       // Check if domain related even with UNKNOWN type
       if (domainService) {
         typeLabel = "Domain";
+        const domainName = extractDomainName(tx.description || "");
         const cost = totalNativeSent > 0 ? formatSol(totalNativeSent) : "";
-        description = cost
-          ? `Domain transaction via ${domainService} for ${cost}`
-          : `Domain transaction via ${domainService}`;
+        if (domainName && cost) {
+          description = `Bought ${domainName} for ${cost}`;
+        } else if (domainName) {
+          description = `Registered ${domainName}`;
+        } else {
+          description = cost
+            ? `Domain transaction on ${domainService} for ${cost}`
+            : `Domain transaction on ${domainService}`;
+        }
         amount = cost;
-      } else if (tx.description) {
-        description = tx.description;
       } else {
+        const protocol = detectProtocol(tx) || sourceName;
         // Best effort from transfers
         if (totalNativeSent > 0 && totalNativeReceived === 0) {
           description = `Sent ${formatSol(totalNativeSent)}`;
           amount = formatSol(totalNativeSent);
+          if (protocol) description += ` to ${protocol}`;
         } else if (totalNativeReceived > 0 && totalNativeSent === 0) {
           description = `Received ${formatSol(totalNativeReceived)}`;
           amount = formatSol(totalNativeReceived);
+          if (protocol) description += ` from ${protocol}`;
+        } else if (tokensSent.length > 0) {
+          const t = tokensSent[0];
+          description = `Sent ${formatTokenAmount(t.amount, t.mint)}`;
+          amount = formatTokenAmount(t.amount, t.mint);
+          if (protocol) description += ` to ${protocol}`;
+        } else if (tokensReceived.length > 0) {
+          const t = tokensReceived[0];
+          description = `Received ${formatTokenAmount(t.amount, t.mint)}`;
+          amount = formatTokenAmount(t.amount, t.mint);
+          if (protocol) description += ` from ${protocol}`;
+        } else if (tx.description) {
+          description = tx.description;
         } else {
-          description = typeLabel;
+          description = protocol ? `Interacted with ${protocol}` : typeLabel;
         }
-        if (sourceName && sourceName !== "Unknown" && description !== typeLabel) description += ` via ${sourceName}`;
       }
     }
   }
@@ -587,7 +716,7 @@ function classifyTransaction(tx: HeliusTransaction, walletAddress: string): Pars
   return {
     signature: tx.signature,
     timestamp: tx.timestamp,
-    type: domainService ? "DOMAIN" : type,
+    type: domainService ? "DOMAIN" : (typeLabel === "Deposit" ? "DEPOSIT" : type),
     typeLabel,
     description,
     amount,

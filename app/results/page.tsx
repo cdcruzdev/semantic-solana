@@ -17,6 +17,7 @@ const TYPE_COLORS: Record<string, string> = {
   UNSTAKE_SOL: "bg-orange/15 text-orange border-orange/25",
   OPEN_POSITION: "bg-accent/15 text-accent border-accent/25",
   CLOSE_POSITION: "bg-orange/15 text-orange border-orange/25",
+  DEPOSIT: "bg-accent/15 text-accent border-accent/25",
   INITIALIZE_ACCOUNT: "bg-text-muted/15 text-text-dim border-text-muted/25",
   CLOSE_ACCOUNT: "bg-text-muted/15 text-text-dim border-text-muted/25",
   SPAM: "bg-text-muted/10 text-text-muted border-text-muted/20",
