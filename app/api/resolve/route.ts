@@ -7,6 +7,18 @@ const HELIUS_RPC_URL = HELIUS_API_KEY
   ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
   : "https://api.mainnet-beta.solana.com";
 
+// Shared connection + parser
+let _connection: Connection | null = null;
+let _parser: TldParser | null = null;
+function getConnection(): Connection {
+  if (!_connection) _connection = new Connection(HELIUS_RPC_URL);
+  return _connection;
+}
+function getParser(): TldParser {
+  if (!_parser) _parser = new TldParser(getConnection());
+  return _parser;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const domain = searchParams.get("domain");
@@ -36,8 +48,7 @@ export async function GET(request: NextRequest) {
   // Try AllDomains TLD parser
   if (!address && cleaned.includes(".")) {
     try {
-      const connection = new Connection(HELIUS_RPC_URL);
-      const parser = new TldParser(connection);
+      const parser = getParser();
       const owner = await parser.getOwnerFromDomainTld(cleaned);
       if (owner) {
         address = typeof owner === "string" ? owner : owner.toBase58();

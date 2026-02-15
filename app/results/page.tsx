@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef, Suspense } from "react";
+import { useEffect, useState, useRef, useMemo, memo, Suspense } from "react";
 import type { ParsedTransaction } from "../api/search/route";
 
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -169,7 +169,7 @@ function TransactionBadge({ type, label }: { type: string; label: string }) {
   );
 }
 
-function TransactionRow({ tx }: { tx: ParsedTransaction }) {
+const TransactionRow = memo(function TransactionRow({ tx }: { tx: ParsedTransaction }) {
   const solscanUrl = `https://solscan.io/tx/${tx.signature}`;
 
   return (
@@ -224,7 +224,7 @@ function TransactionRow({ tx }: { tx: ParsedTransaction }) {
       </div>
     </a>
   );
-}
+});
 
 interface SearchResponse {
   query: string;

@@ -8,6 +8,35 @@ const HELIUS_RPC_URL = HELIUS_API_KEY
   : "https://api.mainnet-beta.solana.com";
 const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
+// Shared connection + parser (reused across requests, no N+1)
+let _connection: Connection | null = null;
+let _parser: TldParser | null = null;
+function getConnection(): Connection {
+  if (!_connection) _connection = new Connection(HELIUS_RPC_URL);
+  return _connection;
+}
+function getParser(): TldParser {
+  if (!_parser) _parser = new TldParser(getConnection());
+  return _parser;
+}
+
+// In-memory domain cache (5 min TTL, max 1000 entries)
+const domainCache = new Map<string, { value: string | null; expires: number }>();
+const DOMAIN_CACHE_TTL = 300_000;
+function getCachedDomain(key: string): string | null | undefined {
+  const entry = domainCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expires) { domainCache.delete(key); return undefined; }
+  return entry.value;
+}
+function setCachedDomain(key: string, value: string | null) {
+  if (domainCache.size > 1000) {
+    const firstKey = domainCache.keys().next().value;
+    if (firstKey) domainCache.delete(firstKey);
+  }
+  domainCache.set(key, { value, expires: Date.now() + DOMAIN_CACHE_TTL });
+}
+
 // Known program IDs for better labeling
 const KNOWN_PROGRAMS: Record<string, string> = {
   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4": "Jupiter",
@@ -962,11 +991,9 @@ async function resolveDomainToAddress(domain: string): Promise<string | null> {
   }
 
   // 2. Try AllDomains TLD parser for .abc, .bonk, .poor, .id, .solana, .skr, etc.
-  // Check if it looks like a domain (has a dot)
   if (cleaned.includes(".")) {
     try {
-      const connection = new Connection(HELIUS_RPC_URL);
-      const parser = new TldParser(connection);
+      const parser = getParser();
       const owner = await parser.getOwnerFromDomainTld(cleaned);
       if (owner) {
         return typeof owner === "string" ? owner : owner.toBase58();
@@ -976,7 +1003,7 @@ async function resolveDomainToAddress(domain: string): Promise<string | null> {
     }
   }
 
-  // 3. If no dot, try as .sol by default
+  // 3. If no dot, try as .sol by default, then parallel TLD lookup
   if (!cleaned.includes(".")) {
     try {
       const response = await fetch(
@@ -993,21 +1020,18 @@ async function resolveDomainToAddress(domain: string): Promise<string | null> {
       // Fall through
     }
 
-    // Also try AllDomains common TLDs
-    const commonTlds = [".sol", ".abc", ".bonk", ".id", ".solana", ".poor", ".skr"];
-    for (const tld of commonTlds) {
-      if (tld === ".sol") continue; // Already tried above
-      try {
-        const connection = new Connection(HELIUS_RPC_URL);
-        const parser = new TldParser(connection);
+    // Parallel TLD brute-force with shared parser
+    const commonTlds = [".abc", ".bonk", ".id", ".solana", ".poor", ".skr"];
+    const parser = getParser();
+    const results = await Promise.allSettled(
+      commonTlds.map(async (tld) => {
         const owner = await parser.getOwnerFromDomainTld(cleaned + tld);
-        if (owner) {
-          return typeof owner === "string" ? owner : owner.toBase58();
-        }
-      } catch {
-        continue;
-      }
-    }
+        if (owner) return typeof owner === "string" ? owner : owner.toBase58();
+        throw new Error("not found");
+      })
+    );
+    const found = results.find(r => r.status === "fulfilled") as PromiseFulfilledResult<string> | undefined;
+    if (found) return found.value;
   }
 
   return null;
@@ -1020,9 +1044,23 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
 
   if (unique.length === 0) return domains;
 
+  // Check cache first
+  const uncached: string[] = [];
+  for (const addr of unique) {
+    const cached = getCachedDomain(addr);
+    if (cached !== undefined) {
+      if (cached) domains[addr] = cached;
+      // null means "known no domain" — skip lookup
+    } else {
+      uncached.push(addr);
+    }
+  }
+
+  if (uncached.length === 0) return domains;
+
   // 1. Try Bonfida SNS (.sol domains) in parallel
   const bonfidaResults = await Promise.allSettled(
-    unique.map(async (addr) => {
+    uncached.map(async (addr) => {
       try {
         const response = await fetch(
           `https://sns-sdk-proxy.bonfida.workers.dev/domains/${addr}`,
@@ -1046,16 +1084,15 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
   for (const r of bonfidaResults) {
     if (r.status === "fulfilled" && r.value.domain) {
       domains[r.value.addr] = r.value.domain;
+      setCachedDomain(r.value.addr, r.value.domain);
     }
   }
 
-  // 2. For the searched wallet only, try AllDomains TLD parser (main domain first, then any domain)
-  // Only resolve the first address to avoid RPC rate limits
-  const unresolved = unique.filter(a => !domains[a]).slice(0, 5);
+  // 2. Try AllDomains TLD parser with shared connection
+  const unresolved = uncached.filter(a => !domains[a]).slice(0, 5);
   if (unresolved.length > 0) {
     try {
-      const connection = new Connection(HELIUS_RPC_URL);
-      const parser = new TldParser(connection);
+      const parser = getParser();
 
       await Promise.allSettled(
         unresolved.map(async (addr) => {
@@ -1066,6 +1103,7 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
               const main = await parser.getMainDomain(pubkey);
               if (main && main.domain && main.tld) {
                 domains[addr] = main.domain + main.tld;
+                setCachedDomain(addr, main.domain + main.tld);
                 return;
               }
             } catch {
@@ -1079,6 +1117,9 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
                 ? nonSol.sort((a, b) => a.domain.length - b.domain.length)[0]
                 : userDomains.sort((a, b) => a.domain.length - b.domain.length)[0];
               domains[addr] = best.domain;
+              setCachedDomain(addr, best.domain);
+            } else {
+              setCachedDomain(addr, null); // cache negative result
             }
           } catch {
             // Best-effort
@@ -1087,6 +1128,13 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
       );
     } catch {
       // AllDomains resolution is best-effort
+    }
+  }
+
+  // Cache negative results for uncached addresses with no domain found
+  for (const addr of uncached) {
+    if (!domains[addr] && getCachedDomain(addr) === undefined) {
+      setCachedDomain(addr, null);
     }
   }
 
@@ -1283,7 +1331,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const url = `https://api.helius.xyz/v0/addresses/${resolvedAddress}/transactions?api-key=${HELIUS_API_KEY}`;
+    const url = `https://api.helius.xyz/v0/addresses/${encodeURIComponent(resolvedAddress)}/transactions?api-key=${HELIUS_API_KEY}`;
     const response = await fetch(url, {
       next: { revalidate: 30 },
     });
@@ -1334,6 +1382,10 @@ export async function GET(request: NextRequest) {
       addressDomain: inputDomain || domains[resolvedAddress] || null,
       demo: false,
       transactions,
+    }, {
+      headers: {
+        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+      },
     });
   } catch (error) {
     console.error("Search API error:", error);
