@@ -1093,23 +1093,38 @@ async function resolveDomains(addresses: string[]): Promise<Record<string, strin
   return domains;
 }
 
-// Dust threshold: transfers below this are likely spam (100,000 lamports = 0.0001 SOL)
-const DUST_THRESHOLD_LAMPORTS = 100000;
-const DUST_THRESHOLD_SOL = DUST_THRESHOLD_LAMPORTS / 1e9;
+// Dust threshold: transfers below this are likely spam
+const DUST_THRESHOLD_SOL = 0.001; // 0.001 SOL
 
-function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress: string): ParsedTransaction[] {
+function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress: string, rawTxs?: HeliusTransaction[]): ParsedTransaction[] {
   const filtered: ParsedTransaction[] = [];
   let dustCount = 0;
-  let dustTotalLamports = 0;
+  let dustTotalSol = 0;
   const dustSenders = new Set<string>();
 
-  for (const tx of transactions) {
-    // Check if this is a dust transfer (tiny amount received from unknown address)
+  for (let i = 0; i < transactions.length; i++) {
+    const tx = transactions[i];
+    const raw = rawTxs?.[i];
+
+    // Detect multi-recipient spam: someone else sends tiny amounts to many wallets
+    // Pattern: feePayer != wallet, "transferred a total X SOL to multiple accounts"
+    if (tx.type === "TRANSFER" && raw && raw.feePayer !== walletAddress) {
+      const walletReceived = (raw.nativeTransfers || [])
+        .filter(t => t.toUserAccount === walletAddress)
+        .reduce((sum, t) => sum + t.amount, 0) / 1e9;
+      if (walletReceived > 0 && walletReceived < DUST_THRESHOLD_SOL) {
+        dustCount++;
+        dustTotalSol += walletReceived;
+        if (raw.feePayer) dustSenders.add(raw.feePayer);
+        continue;
+      }
+    }
+
+    // Check if this is a dust transfer (tiny amount received)
     if (tx.type === "TRANSFER" && tx.to === walletAddress) {
-      // Parse the amount to check if it's dust
       if (tx.amount.startsWith("< 0.0001")) {
         dustCount++;
-        dustTotalLamports += 1;
+        dustTotalSol += 0.00000001;
         if (tx.from) dustSenders.add(tx.from);
         continue;
       }
@@ -1118,25 +1133,35 @@ function filterSpamTransactions(transactions: ParsedTransaction[], walletAddress
         const solAmount = parseFloat(amountMatch[1]);
         if (solAmount > 0 && solAmount < DUST_THRESHOLD_SOL) {
           dustCount++;
-          dustTotalLamports += Math.round(solAmount * 1e9);
+          dustTotalSol += solAmount;
           if (tx.from) dustSenders.add(tx.from);
-          continue; // Skip this dust tx
+          continue;
         }
       }
     }
+
+    // Also catch cNFT spam mints (unsolicited compressed NFT mints)
+    if ((tx.type === "COMPRESSED_NFT_MINT" || tx.type === "NFT_MINT") && raw && raw.feePayer !== walletAddress) {
+      dustCount++;
+      if (raw.feePayer) dustSenders.add(raw.feePayer);
+      continue;
+    }
+
     filtered.push(tx);
   }
 
   // If we filtered dust, add a single summary row
   if (dustCount > 0) {
-    const dustSol = dustTotalLamports / 1e9;
+    const dustDisplay = dustTotalSol > 0.0001
+      ? `${floorTo4(dustTotalSol)} SOL`
+      : `< 0.0001 SOL`;
     filtered.push({
       signature: `dust-summary-${Date.now()}`,
       timestamp: transactions[transactions.length - 1]?.timestamp || Math.floor(Date.now() / 1000),
       type: "SPAM",
-      typeLabel: "Dust Spam",
-      description: `${dustCount} dust transfer${dustCount > 1 ? "s" : ""} (${dustSol.toExponential(2)} SOL total) from ${dustSenders.size} address${dustSenders.size > 1 ? "es" : ""}`,
-      amount: `${dustSol.toExponential(2)} SOL`,
+      typeLabel: "Spam",
+      description: `Filtered ${dustCount} spam transaction${dustCount > 1 ? "s" : ""} (${dustDisplay} total from ${dustSenders.size} source${dustSenders.size > 1 ? "s" : ""})`,
+      amount: dustDisplay,
       from: dustSenders.size === 1 ? [...dustSenders][0] : "",
       to: walletAddress,
       fee: 0,
@@ -1284,7 +1309,7 @@ export async function GET(request: NextRequest) {
     let transactions = rawTransactions.map(tx => classifyTransaction(tx, resolvedAddress));
 
     // Filter and collapse spam dust transfers
-    transactions = filterSpamTransactions(transactions, resolvedAddress);
+    transactions = filterSpamTransactions(transactions, resolvedAddress, rawTransactions);
 
     // Collect unique addresses: searched wallet + counterparties
     const addressSet = new Set<string>([resolvedAddress]);

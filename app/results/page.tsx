@@ -1,8 +1,17 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import type { ParsedTransaction } from "../api/search/route";
+
+const BASE58_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+interface ResolveResult {
+  resolved: boolean;
+  domain?: string;
+  address?: string;
+  truncated?: string;
+}
 
 const TYPE_COLORS: Record<string, string> = {
   SWAP: "bg-accent/15 text-accent border-accent/25",
@@ -199,6 +208,27 @@ function ResultsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [newQuery, setNewQuery] = useState(query);
+  const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced domain resolution for the search bar
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setResolveResult(null);
+    const trimmed = newQuery.trim();
+    if (!trimmed || BASE58_REGEX.test(trimmed) || !trimmed.includes(".")) return;
+    debounceRef.current = setTimeout(async () => {
+      setResolving(true);
+      try {
+        const r = await fetch(`/api/resolve?domain=${encodeURIComponent(trimmed)}`);
+        const d = await r.json();
+        setResolveResult(d.resolved ? d : { resolved: false });
+      } catch { setResolveResult(null); }
+      finally { setResolving(false); }
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [newQuery]);
 
   useEffect(() => {
     if (!query) return;
@@ -235,14 +265,38 @@ function ResultsContent() {
           >
             Semantic Solana
           </button>
-          <form onSubmit={handleSearch} className="flex-1 flex gap-2">
-            <input
-              type="text"
-              value={newQuery}
-              onChange={(e) => setNewQuery(e.target.value)}
-              className="flex-1 min-w-0 bg-surface border border-border rounded-lg px-3 py-2 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-xs sm:text-sm"
-              placeholder="Wallet address..."
-            />
+          <form onSubmit={handleSearch} className="flex-1 flex gap-2 relative">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={newQuery}
+                onChange={(e) => setNewQuery(e.target.value)}
+                className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-text placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all duration-200 font-mono text-xs sm:text-sm"
+                placeholder="Wallet address or domain..."
+              />
+              {newQuery.trim().includes(".") && !BASE58_REGEX.test(newQuery.trim()) && (resolving || resolveResult) && (
+                <div className="absolute left-0 right-0 top-full mt-1 bg-surface border border-border rounded-lg overflow-hidden shadow-lg z-50">
+                  {resolving ? (
+                    <div className="px-4 py-2 text-text-muted text-xs flex items-center gap-2">
+                      <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      Resolving...
+                    </div>
+                  ) : resolveResult?.resolved ? (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/results?q=${encodeURIComponent(newQuery.trim())}`)}
+                      className="w-full px-4 py-2 text-left hover:bg-accent/10 transition-colors cursor-pointer"
+                    >
+                      <span className="text-accent font-medium text-sm">{resolveResult.domain}</span>
+                      <span className="text-text-muted text-xs mx-2">→</span>
+                      <span className="font-mono text-text-dim text-xs">{resolveResult.truncated}</span>
+                    </button>
+                  ) : resolveResult && !resolveResult.resolved ? (
+                    <div className="px-4 py-2 text-text-muted text-xs">Domain not found</div>
+                  ) : null}
+                </div>
+              )}
+            </div>
             <button
               type="submit"
               className="bg-accent hover:bg-accent-dim text-base font-semibold px-4 sm:px-6 py-2 rounded-lg cursor-pointer transition-all duration-200 active:scale-[0.98] text-sm"
